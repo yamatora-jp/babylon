@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="jp">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOZ 3D Model Viewer</title>
+
+    <script src="./libs/babylon/babylon.js"></script>
+    <script src="./libs/babylon/babylonjs.loaders.min.js"></script>
+
+    <style>
+
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      #header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 50px;
+        background-color: #333;
+        color: white;
+        display: flex;
+        align-items: center;
+        padding: 0 20px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        z-index: 2;
+      }
+      #header img {
+        height: 30px;
+        margin-right: 10px;
+      }
+      #header h1 {
+        font-size: 20px;
+        font-family: Arial, sans-serif;
+        margin: 0;
+      }
+
+        /* キャンバスを画面全体に設定 */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        #controls-container {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+        #controls-container label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        #controls-container input[type="range"] {
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <!-- ヘッダー -->
+    <div id="header">
+      <h1>TOZ 3D Model Viewer</h1>
+    </div>
+
+    <canvas id="renderCanvas" touch-action="none"></canvas>
+
+    <!-- コントロールパネル -->
+    <div id="controls-container">
+        <div>
+            <label for="zoom-slider" style="color: black;">Zoom</label>
+            <input
+                type="range"
+                id="zoom-slider"
+                min="1"
+                max="100"
+                step="1"
+                value="45"
+            />
+        </div>
+        <button id="rotate-left">左回転</button>
+        <button id="rotate-right">右回転</button>
+        <button id="stop-rotation">停止</button>
+    </div>
+
+    <script>
+        // URLパラメータからPLYファイル名を取得
+        const urlParams = new URLSearchParams(window.location.search);
+        const plyFileName = urlParams.get("model") || "italiachan.splat";
+
+        const canvas = document.getElementById("renderCanvas");
+        const engine = new BABYLON.Engine(canvas, true);
+
+        const createScene = () => {
+            const scene = new BABYLON.Scene(engine);
+
+            // カメラ設定
+            const camera = new BABYLON.ArcRotateCamera(
+                "camera",
+                Math.PI / 2, Math.PI / 2, 10,
+                BABYLON.Vector3.Zero(),
+                scene
+            );
+            camera.attachControl(canvas, true);
+
+            // ズームの感度を調整
+            camera.wheelPrecision = 10;  // ズームの速さ（数値を小さくすると細かくズーム）
+            camera.inertia = 0.5;        // ズーム操作の反応速度（0～1の範囲で設定）
+            camera.attachControl(canvas, true);
+            
+            // ズームの範囲制限（最小半径を設定して突き抜け防止）
+            camera.lowerRadiusLimit = 2;  // 最小ズーム距離（モデルのサイズに応じて調整）
+            camera.upperRadiusLimit = 50; // 最大ズーム距離
+
+            // 環境光
+            const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(1, 1, 0), scene);
+
+            // PLYファイルのロード
+            BABYLON.SceneLoader.Append("", `./${plyFileName}`, scene, function (scene) {
+                const mesh = scene.meshes[0];
+                mesh.scaling = new BABYLON.Vector3(2, 2, 2); // モデルのスケールを調整
+                console.log("PLY file loaded and scaled successfully!");
+            }, null, function (scene, message) {
+                console.error("Failed to load PLY file:", message);
+            });
+
+            return { scene, light, camera };
+        };
+
+        const { scene, light, camera } = createScene();
+
+        // ズーム調整
+        const zoomSlider = document.getElementById("zoom-slider");
+        zoomSlider.addEventListener("input", () => {
+            const maxZoom = 50; // 最大ズーム値
+            const minZoom = 2;  // 最小ズーム値（突き抜け防止）
+
+            const zoomValue = parseFloat(zoomSlider.value);
+            const newRadius = minZoom + (maxZoom - minZoom) * (1 - zoomValue / 100);
+            camera.radius = Math.max(newRadius, camera.lowerRadiusLimit);
+        });
+
+        // ズーム調整のための最大・最小ズーム値
+        const maxZoom = 50; // 最大ズーム値
+        const minZoom = 2;  // 最小ズーム値（突き抜け防止）
+
+        // ズームスライダーの入力イベント
+        zoomSlider.addEventListener("input", () => {
+            const zoomValue = parseFloat(zoomSlider.value);
+            const newRadius = minZoom + (maxZoom - minZoom) * (1 - zoomValue / 100);
+            camera.radius = Math.max(newRadius, camera.lowerRadiusLimit);  // 新しいズーム値をカメラに適用
+        });
+        
+        // カメラのズームが変更されたときにスライダーの値を更新
+        camera.onViewMatrixChangedObservable.add(() => {
+            const zoomPercentage = (1 - (camera.radius - minZoom) / (maxZoom - minZoom)) * 100;
+            zoomSlider.value = zoomPercentage.toFixed(0);  // スライダーの値を更新
+        });
+
+        // 回転
+        let rotationSpeed = 0;
+        const rotateLeftButton = document.getElementById("rotate-left");
+        const rotateRightButton = document.getElementById("rotate-right");
+        const stopRotationButton = document.getElementById("stop-rotation");
+
+        rotateLeftButton.addEventListener("click", () => {
+            rotationSpeed = 0.01;
+        });
+
+        rotateRightButton.addEventListener("click", () => {
+            rotationSpeed = -0.01;
+        });
+
+        stopRotationButton.addEventListener("click", () => {
+            rotationSpeed = 0;
+        });
+
+        // レンダリングループ
+        engine.runRenderLoop(() => {
+            scene.meshes.forEach(mesh => {
+                mesh.rotation.y += rotationSpeed;
+            });
+            scene.render();
+        });
+
+        // ウィンドウサイズ変更時のリサイズ
+        window.addEventListener("resize", () => {
+            engine.resize();
+        });
+
+
+    </script>
+</body>
+</html>
